@@ -18,6 +18,7 @@ from . import __version__ as VERSION
 from .launcher import Launcher
 from .objects import DataManager
 from .utils import TaskPool, get_ip
+from .common import JobStatus
 
 
 # Override default values for logging
@@ -58,7 +59,6 @@ class PapermillHub(Application):
     @default("base_url")
     def _default_base_url(self):
         out = os.environ.get("JUPYTERHUB_SERVICE_URL", "http://:5000")
-        print(out)
         return out
 
     @validate("base_url")
@@ -246,15 +246,28 @@ class JobsHandler(APIHandler):
 
         base_url = self.papermill.proxy_url
         url = url_path_join(base_url, server["url"], "papermillhub/")
+        json_data = self.json_data
+        if isinstance(json_data, str):
+            json_data = json.loads(json_data)
+
+        # TODO: We pass this through so that the runner can callback to update
+        # the database. See if there's a better way to do this.
+        # TODO: don't hardcode the service name. Maybe JUPYTERHUB_SERVICE_PREFIX?
+        json_data["proxy_url"] = url_path_join(base_url, "services", "papermillhub/")
         req = HTTPRequest(
             url,
             "POST",
             headers={"Authorization": f"token {self.hub_auth.api_token}"},
-            body=str(self.json_data),
+            body=json.dumps(json_data),
         )
         resp = await AsyncHTTPClient().fetch(req)
-        job_id = json.loads(resp.body)["job_id"]
-
+        body = json.loads(resp.body)
+        job_id = body["job_id"]
+        self.papermill.db.create_job(self.get_papermill_user(),
+                                     job_id,
+                                     json_data["in_path"],
+                                     json_data["out_path"],
+                                     json_data.get("parameters", {}))
         self.write({"job_id": job_id})
 
     @web.authenticated
@@ -278,6 +291,19 @@ class JobsHandler(APIHandler):
             raise web.HTTPError(405)
         await self.papermill.cancel(job_id)
         self.set_status(204)
+
+    @web.authenticated
+    async def patch(self, job_id):
+        if not job_id:
+            raise web.HTTPError(405)
+
+        # TODO: error handling
+        json_data = json.loads(self.request.body)
+        user = self.get_papermill_user()
+        self.log.info("Patch %s for %s", job_id, user)
+        job = user.jobs[job_id]
+        json_data["status"] = JobStatus(json_data["status"])
+        self.papermill.db.update_job(job, **json_data)
 
 
 prefix = os.environ.get("JUPYTERHUB_SERVICE_PREFIX", "/")

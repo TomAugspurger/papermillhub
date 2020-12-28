@@ -1,26 +1,30 @@
 import asyncio
 import atexit
 import json
+import os
 import uuid
 
 from notebook.utils import url_path_join
 from notebook.base.handlers import APIHandler
 from notebook.services.contents.manager import ContentsManager
 from tornado import web
+from tornado.httpclient import AsyncHTTPClient, HTTPRequest
 from traitlets import Instance, Dict
 from traitlets.config import LoggingConfigurable
 
 from .common import JobStatus
 from .executor import execute_notebook
+from .objects import timestamp
 
 
 class PapermillJob(object):
-    def __init__(self, id, in_path, out_path, parameters=None, kernel_name=""):
+    def __init__(self, id, in_path, out_path, parameters=None, kernel_name="", proxy_url=None):
         self.id = id
         self.in_path = in_path
         self.out_path = out_path
         self.parameters = parameters
         self.kernel_name = kernel_name
+        self.proxy_url = proxy_url
         # Runtime state
         self.status = JobStatus.PENDING
         self.task = None
@@ -65,13 +69,14 @@ class PapermillRunner(LoggingConfigurable):
             else:
                 loop.run_until_complete(self._stop())
 
-    async def schedule(self, in_path, out_path, parameters=None, kernel_name=""):
+    async def schedule(self, in_path, out_path, parameters=None, kernel_name="", proxy_url=None):
         job = PapermillJob(
             id=uuid.uuid4().hex,
             in_path=in_path,
             out_path=out_path,
             parameters=parameters,
-            kernel_name=kernel_name
+            kernel_name=kernel_name,
+            proxy_url=proxy_url,
         )
         self.jobs[job.id] = job
         await self.queue.put(job)
@@ -147,6 +152,28 @@ class PapermillRunner(LoggingConfigurable):
         else:
             job.status = JobStatus.SUCCEEDED
             self.log.info("Papermill job %s completed successfully", job.id)
+            # Notify the database.
+            url = url_path_join(job.proxy_url, "api", "jobs", job.id)
+            json_data = {
+                "status": job.status,
+                "stop_time": timestamp(),
+            }
+            # We're running in the hub, so we should JUPYTERHUB_API_TOKEN.
+            # It's not clear if we can also get the proxy URL from the env.
+            api_token = os.environ["JUPYTERHUB_API_TOKEN"]
+            req = HTTPRequest(
+                url,
+                "PATCH",
+                headers={"Authorization": f"token {api_token}"},
+                body=json.dumps(json_data),
+            )
+            self.log.info("Updating %s for %s", url, job.id)
+            try:
+                resp = await AsyncHTTPClient().fetch(req)
+            except Exception as e:
+                self.log.error(e)
+            else:
+                self.log.info("Updated %s", resp)
 
     async def queue_handler(self):
         while True:
@@ -168,6 +195,10 @@ class PapermillRunner(LoggingConfigurable):
 
 
 class PapermillhubHandler(APIHandler):
+    @property
+    def papermill(self):
+        return self.settings.get("papermill")
+
     @staticmethod
     def get_or_raise(data, key):
         try:
@@ -192,12 +223,14 @@ class PapermillhubHandler(APIHandler):
         out_path = self.get_or_raise(data, "out_path")
         parameters = data.get("parameters", {})
         kernel_name = data.get("kernel_name", "")
+        proxy_url = data.get("proxy_url", "")
 
         job_id = await self.papermill_runner.schedule(
             in_path,
             out_path,
             parameters=parameters,
-            kernel_name=kernel_name
+            kernel_name=kernel_name,
+            proxy_url=proxy_url,
         )
         self.write({"job_id": job_id})
 

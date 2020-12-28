@@ -1,3 +1,8 @@
 jupyterhub-proxy.pid
 jupyterhub.sqlite
-
+grabbed_image.ipynb
+papermillhub.db
+*.ipynb_checkpoints
+*.ipython
+*.jupyter
+*.local

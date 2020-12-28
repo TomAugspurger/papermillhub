@@ -169,10 +169,10 @@ class DataManager(object):
             self.username_to_user[username] = user
         return user
 
-    def create_job(self, user, in_path, out_path, parameters):
+    def create_job(self, user, name, in_path, out_path, parameters):
         """Create a new job for a user"""
         common = {
-            "name": uuid.uuid4().hex,
+            "name": name,
             "in_path": in_path,
             "out_path": out_path,
             "parameters": parameters,
@@ -195,6 +195,7 @@ class DataManager(object):
             )
             self.id_to_job[job.id] = job
             user.jobs[job.name] = job
+            assert job.name in user.jobs
 
         return job
 
@@ -217,6 +218,8 @@ class User(object):
     def active_jobs(self):
         return [j for j in self.jobs.values() if j.is_active()]
 
+    def __repr__(self):
+        return f"<User name={self.name}>"
 
 class Job(object):
     def __init__(
@@ -242,6 +245,9 @@ class Job(object):
         self.spawner = spawner
         self.start_time = start_time
         self.stop_time = stop_time
+
+    def __repr__(self):
+        return "<Job name={}, status={}>".format(self.name, self.status)
 
     def is_active(self):
         return self.status <= JobStatus.RUNNING
