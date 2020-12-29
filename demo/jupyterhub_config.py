@@ -28,4 +28,4 @@ c.JupyterHub.cookie_secret_file = '/home/taugspurger/jupyterhub_cookie_secret'
 # --------------------------
 # PapermillHub configuration
 c.PapermillHub.db_url = "sqlite:///papermillhub.db"
-c.PapermillHub.db_debug = True
+# c.PapermillHub.db_debug = True

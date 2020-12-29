@@ -159,7 +159,9 @@ class PapermillHub(Application):
             base_url.port, address=base_url.hostname
         )
         self.log.info("PapermillHub listening on %s", self.base_url)
-
+        self.log.info("PapermillHub proxy url %s", self.proxy_url)
+        self.log.info("PapermillHub service prefix %s", prefix)
+        # prefix = os.environ.get("JUPYTERHUB_SERVICE_
         # Remaining setup is done asynchronously
         loop = IOLoop.current()
         loop.add_callback(self.start_or_exit)
@@ -306,7 +308,15 @@ class JobsHandler(APIHandler):
         self.papermill.db.update_job(job, **json_data)
 
 
+class RootHandler(APIHandler):
+    def get(self):
+        self.write({"version": "1.0.0"})
+
+
 prefix = os.environ.get("JUPYTERHUB_SERVICE_PREFIX", "/")
-default_handlers = [(prefix + "api/jobs/([a-zA-Z0-9-_.]*)", JobsHandler)]
+default_handlers = [
+    (prefix, RootHandler),
+    (prefix + "api/jobs/([a-zA-Z0-9-_.]*)", JobsHandler),
+]
 
 main = PapermillHub.launch_instance
